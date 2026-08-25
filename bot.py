@@ -3,6 +3,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from scl_automation import run_call, run_cdr_fetch
+from scl_debug import debug_call
 
 API_ID = int(os.environ["TG_API_ID"])
 API_HASH = os.environ["TG_API_HASH"]
@@ -77,6 +78,27 @@ async def cdr_handler(client: Client, message: Message):
         await status_msg.delete()
     else:
         await status_msg.edit(f"CDR ({len(rows)} rows):\n\n{text}")
+
+
+@app.on_message(filters.command("debugcall") & auth_filter)
+async def debugcall_handler(client: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("Usage: /debugcall <number>")
+        return
+
+    number = message.command[1]
+    status_msg = await message.reply(f"Running diagnostic dial to {number}...")
+
+    try:
+        result = await debug_call(number)
+    except Exception as e:
+        await status_msg.edit(f"Diagnostic failed: {e}")
+        return
+
+    await status_msg.edit("Diagnostic complete — sending screenshots and log.")
+    for shot in result["screenshots"]:
+        await message.reply_photo(shot)
+    await message.reply_document(result["log"], caption="Console/network/websocket log")
 
 
 if __name__ == "__main__":
