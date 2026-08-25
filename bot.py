@@ -1,8 +1,9 @@
 import os
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from scl_automation import run_call, run_cdr_fetch
+from scl_automation import run_call, run_cdr_fetch, run_call_with_message
 from scl_debug import debug_call
 
 API_ID = int(os.environ["TG_API_ID"])
@@ -99,6 +100,49 @@ async def debugcall_handler(client: Client, message: Message):
     for shot in result["screenshots"]:
         await message.reply_photo(shot)
     await message.reply_document(result["log"], caption="Console/network/websocket log")
+
+
+@app.on_message(filters.command("voicecall") & auth_filter)
+async def voicecall_handler(client: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("Usage: reply to a voice note or audio file with /voicecall <number>")
+        return
+
+    reply = message.reply_to_message
+    if not reply or not (reply.voice or reply.audio):
+        await message.reply("Reply to a voice note or audio file with this command.")
+        return
+
+    number = message.command[1]
+    status_msg = await message.reply("Downloading and converting audio...")
+
+    src_path = await reply.download(file_name="/tmp/voice_src")
+    wav_path = "/tmp/voice_call.wav"
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", src_path,
+        "-ar", "48000", "-ac", "1", "-sample_fmt", "s16", wav_path,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+    if proc.returncode != 0:
+        await status_msg.edit("Audio conversion failed.")
+        return
+
+    await status_msg.edit(f"Dialing {number} to play your message...")
+
+    try:
+        result = await run_call_with_message(number, wav_path)
+    except Exception as e:
+        await status_msg.edit(f"Call failed: {e}")
+        return
+
+    labels = {
+        "message_played_and_hungup": f"{number} answered — message played, call ended.",
+        "no_answer_timeout": f"{number} — no answer within timeout.",
+    }
+    await status_msg.edit(labels.get(result, result))
 
 
 if __name__ == "__main__":
