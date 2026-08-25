@@ -33,9 +33,15 @@ async def login(playwright) -> tuple[Browser, Page]:
     """Launch a headless browser and log into the SCL panel."""
     browser = await playwright.chromium.launch(
         headless=True,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+        ],
     )
-    page = await browser.new_page()
+    context = await browser.new_context(permissions=["microphone"])
+    page = await context.new_page()
     await page.goto(SCL_URL, wait_until="networkidle")
 
     await page.get_by_placeholder("Enter username").fill(USERNAME)
@@ -50,6 +56,9 @@ async def login(playwright) -> tuple[Browser, Page]:
 async def dial_number(page: Page, number: str) -> None:
     """Go to the Dialer and place a call."""
     await page.goto(f"{SCL_URL}/#dialer", wait_until="networkidle")
+    # Give the SIP registration over websocket a moment to complete
+    # before dialing (page "networkidle" doesn't account for it).
+    await page.wait_for_timeout(1500)
     await page.get_by_placeholder("Enter number").fill(number)
     await page.get_by_role("button", name="Call").click()
 
