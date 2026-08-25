@@ -26,19 +26,24 @@ WATCH_SECONDS = 30
 SCREENSHOT_EVERY = 5
 
 
-async def debug_call(number: str) -> dict:
+async def debug_call(number: str, audio_path: str | None = None) -> dict:
+    """
+    If audio_path is given, launches with --use-file-for-fake-audio-capture
+    pointing at it (same as /voicecall), so we can debug that path too.
+    """
     logs: list[str] = []
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--use-fake-device-for-media-stream",
-                "--use-fake-ui-for-media-stream",
-            ],
-        )
+        launch_args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+        ]
+        if audio_path:
+            launch_args.append(f"--use-file-for-fake-audio-capture={audio_path}")
+
+        browser = await pw.chromium.launch(headless=True, args=launch_args)
         context = await browser.new_context(permissions=["microphone"])
         page = await context.new_page()
 
