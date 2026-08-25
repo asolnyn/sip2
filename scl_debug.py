@@ -22,6 +22,8 @@ USERNAME = os.environ["SCL_USERNAME"]
 PASSWORD = os.environ["SCL_PASSWORD"]
 
 KEYWORDS = ("janus", "dial", "call", "sip")
+WATCH_SECONDS = 30
+SCREENSHOT_EVERY = 5
 
 
 async def debug_call(number: str) -> dict:
@@ -78,10 +80,42 @@ async def debug_call(number: str) -> dict:
         await page.get_by_placeholder("Enter number").fill(number)
         await page.screenshot(path="/tmp/debug_2_number_filled.png")
 
-        # --- Click Call, wait, screenshot ---
+        # --- Click Call, then watch the full call lifecycle instead of
+        # a fixed short wait, taking a screenshot every few seconds ---
         await page.get_by_role("button", name="Call").click()
-        await page.wait_for_timeout(4000)
-        await page.screenshot(path="/tmp/debug_3_after_call_click.png")
+
+        shot_paths = []
+        elapsed = 0
+        outcome = "timed_out_watching"
+        shot_index = 3
+
+        while elapsed < WATCH_SECONDS:
+            await page.wait_for_timeout(SCREENSHOT_EVERY * 1000)
+            elapsed += SCREENSHOT_EVERY
+
+            path = f"/tmp/debug_{shot_index}_t{elapsed}s.png"
+            await page.screenshot(path=path)
+            shot_paths.append(path)
+            shot_index += 1
+
+            end_call_btn = page.get_by_role("button", name="End call")
+            if await end_call_btn.count() == 0:
+                logs.append(f"[debug] End call button gone at t={elapsed}s — call ended on its own")
+                outcome = "call_ended_before_answer"
+                break
+
+            timer_texts = await page.locator("text=/^\\d{2}:\\d{2}$/").all_inner_texts()
+            if any(t != "00:00" for t in timer_texts):
+                logs.append(f"[debug] Timer advanced at t={elapsed}s ({timer_texts}) — treating as answered")
+                await end_call_btn.click()
+                outcome = "answered_and_hungup"
+                break
+        else:
+            end_call_btn = page.get_by_role("button", name="End call")
+            if await end_call_btn.count() > 0:
+                await end_call_btn.click()
+
+        logs.append(f"[debug] outcome: {outcome}")
 
         with open("/tmp/debug_log.txt", "w") as f:
             f.write("\n".join(logs) if logs else "(nothing captured — no matching console/network/websocket activity)")
@@ -92,7 +126,6 @@ async def debug_call(number: str) -> dict:
         "screenshots": [
             "/tmp/debug_1_dialer_loaded.png",
             "/tmp/debug_2_number_filled.png",
-            "/tmp/debug_3_after_call_click.png",
-        ],
+        ] + shot_paths,
         "log": "/tmp/debug_log.txt",
     }
