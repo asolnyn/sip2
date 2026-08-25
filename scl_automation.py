@@ -19,7 +19,10 @@ Until then, this will run, but the "detect answered -> hang up" and
 
 import asyncio
 import os
+import re
 from playwright.async_api import async_playwright, Page, Browser
+
+TIMER_RE = re.compile(r"^\d{2}:\d{2}$")
 
 SCL_URL = "https://amarip.net"
 USERNAME = os.environ["SCL_USERNAME"]
@@ -51,30 +54,37 @@ async def dial_number(page: Page, number: str) -> None:
     await page.get_by_role("button", name="Call").click()
 
 
-async def monitor_and_hangup(page: Page, ring_timeout: int = 45) -> str:
+async def monitor_and_hangup(page: Page, ring_timeout: int = 40) -> str:
     """
-    Poll the Dialer page after placing a call. As soon as it looks like
-    the other side picked up, hang up immediately.
-
-    TODO: once you send a screenshot of the Dialer mid-call, replace the
-    placeholder detection logic below with the real selector/text that
-    shows up (e.g. a call timer like "00:01", or a "Hang Up" button that
-    replaces the "Call" button).
+    Poll the Dialer page after placing a call. The call modal shows a
+    duration timer (e.g. "00:00") and an "End call" button. The timer
+    stays at 00:00 while ringing and starts counting once the other
+    side picks up — that's how we detect "answered". As soon as it
+    does, we hang up immediately.
     """
     poll_interval = 0.5
     elapsed = 0.0
 
     while elapsed < ring_timeout:
-        # --- Placeholder detection logic (needs real selector) ---
-        hangup_btn = page.get_by_role("button", name="Hang Up")
-        if await hangup_btn.count() > 0:
-            await hangup_btn.click()
+        end_call_btn = page.get_by_role("button", name="End call")
+        if await end_call_btn.count() == 0:
+            # Modal is gone — call ended on its own (rejected, failed,
+            # or the ring cycle expired on the carrier side).
+            return "call_ended_before_answer"
+
+        timer_texts = await page.locator("text=/^\\d{2}:\\d{2}$/").all_inner_texts()
+        if any(t != "00:00" for t in timer_texts):
+            await end_call_btn.click()
             return "answered_and_hungup"
-        # -----------------------------------------------------------
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
+    # Ring timeout reached and still ringing — hang up ourselves so we
+    # don't leave a call open.
+    end_call_btn = page.get_by_role("button", name="End call")
+    if await end_call_btn.count() > 0:
+        await end_call_btn.click()
     return "no_answer_timeout"
 
 
